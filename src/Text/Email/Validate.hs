@@ -6,32 +6,32 @@ module Text.Email.Validate
 	, EmailAddress -- re-exported
 	, localPart
 	, domainPart
-	, toByteString
+	, toText
 	)
 where
 
 import Control.Applicative ((<*))
 
-import Data.ByteString (ByteString)
-import Data.Attoparsec.ByteString (parseOnly, endOfInput)
+import Data.Text (Text)
+import Data.Attoparsec.Text (parseOnly, endOfInput)
 
-import Text.Email.Parser (EmailAddress, toByteString, addrSpec, localPart, domainPart)
+import Text.Email.Parser (EmailAddress, toText, addressHeader, localPart, domainPart)
 
 -- | Smart constructor for an email address
-emailAddress :: ByteString -> Maybe EmailAddress
+emailAddress :: Text -> Maybe EmailAddress
 emailAddress = either (const Nothing) Just . validate
 
 -- | Checks that an email is valid and returns a version of it
 --   where comments and whitespace have been removed.
-canonicalizeEmail :: ByteString -> Maybe ByteString
-canonicalizeEmail = fmap toByteString . emailAddress
+canonicalizeEmail :: Text -> Maybe Text
+canonicalizeEmail = fmap toText . emailAddress
 
 -- | Validates whether a particular string is an email address
 --   according to RFC5322.
-isValid :: ByteString -> Bool
+isValid :: Text -> Bool
 isValid = either (const False) (const True) . validate
 
 -- | If you want to find out *why* a particular string is not
 --   an email address, use this.
-validate :: ByteString -> Either String EmailAddress
-validate = parseOnly (addrSpec <* endOfInput)
+validate :: Text -> Either String EmailAddress
+validate = parseOnly (addressHeader <* endOfInput)

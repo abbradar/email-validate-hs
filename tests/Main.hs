@@ -1,11 +1,13 @@
-module Main where
+{-# LANGUAGE OverloadedStrings #-}
 
+module Main where
 
 import Text.Email.Validate
 import Test.HUnit
 
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as BS
+import Data.Monoid
+import Data.Text (Text)
+import qualified Data.Text as T
 
 import Test.Framework as TF (defaultMain, testGroup, Test)
 import Test.Framework.Providers.HUnit
@@ -19,7 +21,7 @@ main = defaultMain tests
 tests :: [TF.Test]
 tests = [
         testGroup "EmailAddress Show/Read instances" [
-                testProperty "showLikeByteString" prop_showLikeByteString,
+                testProperty "showLikeText" prop_showLikeText,
                 testProperty "showAndReadBackWithoutQuoteFails" prop_showAndReadBackWithoutQuoteFails,
                 testProperty "showAndReadBack" prop_showAndReadBack
                 ],
@@ -27,7 +29,7 @@ tests = [
                 testProperty "doubleCanonicalize" prop_doubleCanonicalize
                 ],
         testGroup "Unit tests Text.Email.Validate" $ flip concatMap units
-            (\(em, valid, _) -> let email = BS.pack em
+            (\(em, valid, _) -> let email = T.pack em
                 in
                     [
                     testCase ("doubleCanonicalize '" ++ em ++ "'") (True @=? case emailAddress email of { Nothing -> True; Just ok -> prop_doubleCanonicalize ok }),
@@ -35,28 +37,28 @@ tests = [
                     ])
        ]
 
-instance Arbitrary ByteString where
-    arbitrary = fmap BS.pack arbitrary
+instance Arbitrary Text where
+    arbitrary = fmap T.pack arbitrary
 
 instance Arbitrary EmailAddress where
     arbitrary = do
-        local <- suchThat arbitrary (\x -> isEmail x (BS.pack "example.com"))
-        domain <- suchThat arbitrary (isEmail (BS.pack "example"))
+        local <- suchThat arbitrary (\x -> isEmail x "example.com")
+        domain <- suchThat arbitrary (isEmail "example")
         let email = makeEmailLike local domain
         let (Just result) = emailAddress email
         return result
 
-isEmail :: ByteString -> ByteString -> Bool
+isEmail :: Text -> Text -> Bool
 isEmail l d = isValid (makeEmailLike l d)
 
-makeEmailLike :: ByteString -> ByteString -> ByteString
-makeEmailLike l d = BS.concat [l, BS.singleton '@', d]
+makeEmailLike :: Text -> Text -> Text
+makeEmailLike l d = l <> "@" <> d
 
 prop_doubleCanonicalize :: EmailAddress -> Bool
-prop_doubleCanonicalize email =  Just email == emailAddress (toByteString email)
+prop_doubleCanonicalize email =  Just email == emailAddress (toText email)
 
-prop_showLikeByteString :: EmailAddress -> Bool
-prop_showLikeByteString email = show (toByteString email) == show email
+prop_showLikeText :: EmailAddress -> Bool
+prop_showLikeText email = show (toText email) == show email
 
 prop_showAndReadBack :: EmailAddress -> Bool
 prop_showAndReadBack email = read (show email) == email
@@ -71,8 +73,6 @@ prop_showAndReadBackWithoutQuoteFails email =
     readMaybe (init s) == Nothing &&
     readMaybe (tail s) == Nothing
     where s = show email
-
---unitTest (x, y, z) = if not (isValid (BS.pack x) == y) then "" else (x ++" became "++ (case emailAddress (BS.pack x) of {Nothing -> "fail"; Just em -> show em}) ++": Should be "++show y ++", got "++show (not y)++"\n\t"++z++"\n")
 
 units :: [(String, Bool, String)]
 units = [
@@ -147,7 +147,7 @@ units = [
     ("\"[[ test ]]\"@example.com", True, ""),
     ("test.test@example.com", True, ""),
     ("\"test.test\"@example.com", True, ""),
-    ("test.\"test\"@example.com", True, "Obsolete form, but documented in RFC2822"),
+    ("test.\"test\"@example.com", False, "Obsolete form, documented in RFC2822 but disallowed in RFC2821"),
     ("\"test@test\"@example.com", True, ""),
     ("test@123.123.123.x123", True, ""),
     ("test@[123.123.123.123]", True, ""),
@@ -173,7 +173,7 @@ units = [
     ("@NotAnEmail", False, "Phil Haack says so"),
     ("\"test\\\\blah\"@example.com", True, ""),
     ("\"test\\blah\"@example.com", True, "Any character can be escaped in a quoted string"),
-    ("\"test\\\rblah\"@example.com", True, "Quoted string specifically excludes carriage returns unless escaped"),
+    ("\"test\\\rblah\"@example.com", False, "Quoted string specifically excludes carriage returns in RFC 5321, even quoted"),
     ("\"test\rblah\"@example.com", False, "Quoted string specifically excludes carriage returns"),
     ("\"test\\\"blah\"@example.com", True, ""),
     ("\"test\"blah\"@example.com", False, "Phil Haack says so"),
@@ -190,18 +190,11 @@ units = [
     ("\"Ima Fool\"@example.com", True, ""),
     ("Ima Fool@example.com", False, "Phil Haack says so"),
     ("phil.h\\@\\@ck@haacked.com", False, "Escaping can only happen in a quoted string"),
-    ("\"first\".\"last\"@example.com", True, ""),
-    ("\"first\".middle.\"last\"@example.com", True, ""),
+    ("\"first\".\"last\"@example.com", False, "RFC 5321 does not allow obs-local-part"),
     ("\"first\\\\\"last\"@example.com", False, "Contains an unescaped quote"),
-    ("\"first\".last@example.com", True, "obs-local-part form as described in RFC 2822"),
-    ("first.\"last\"@example.com", True, "obs-local-part form as described in RFC 2822"),
-    ("\"first\".\"middle\".\"last\"@example.com", True, "obs-local-part form as described in RFC 2822"),
-    ("\"first.middle\".\"last\"@example.com", True, "obs-local-part form as described in RFC 2822"),
-    ("\"first.middle.last\"@example.com", True, "obs-local-part form as described in RFC 2822"),
-    ("\"first..last\"@example.com", True, "obs-local-part form as described in RFC 2822"),
     ("foo@[\\1.2.3.4]", False, "RFC 5321 specifies the syntax for address-literal and does not allow escaping"),
     ("\"first\\\\\\\"last\"@example.com", True, ""),
-    ("first.\"mid\\dle\".\"last\"@example.com", True, "Backslash can escape anything but must escape something"),
+    ("\"first.mid\\dle.last\"@example.com", True, "Backslash can escape anything but must escape something"),
     ("Test.\r\n Folding.\r\n Whitespace@example.com", True, ""),
     ("first\\last@example.com", False, "Unquoted string must be an atom"),
     ("Abc\\@def@example.com", False, "Was incorrectly given as a valid address in the original RFC3696"),
@@ -266,7 +259,7 @@ units = [
     ("test.\r\n \r\n obs@syntax.com", True, "obs-fws allows multiple lines"),
     ("test. \r\n \r\n obs@syntax.com", True, "obs-fws allows multiple lines (test 2: space before break)"),
     ("test.\r\n\r\n obs@syntax.com", False, "obs-fws must have at least one WSP per line"),
-    ("\"null \\\0\"@char.com", True, "can have escaped null character"),
+    ("\"null \\\0\"@char.com", False, "cannot have escaped null character"),
     ("\"null \0\"@char.com", False, "cannot have unescaped null character")
     -- items below here are invalid according to other RFCs (or opinions)
     --("\"\"@example.com", False, "Local part is effectively empty"),
